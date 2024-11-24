@@ -1,4 +1,8 @@
-from http.server import BaseHTTPRequestHandler
+try:
+    from http.server import BaseHTTPRequestHandler
+except ImportError:
+    from BaseHTTPServer import BaseHTTPRequestHandler
+
 import json
 import pickle
 import pandas as pd
@@ -58,10 +62,13 @@ def preprocess_input(data):
 
 def load_model():
     """Loads the trained model from pickle file"""
-    model_path = path.join(path.dirname(__file__), 'random_forest_model_with_classification.pkl')
-    with open(model_path, 'rb') as file:
-        model_data = pickle.load(file)
-    return model_data['model']
+    try:
+        model_path = path.join(path.dirname(__file__), 'random_forest_model_with_classification.pkl')
+        with open(model_path, 'rb') as file:
+            model_data = pickle.load(file)
+        return model_data['model']
+    except Exception as e:
+        raise Exception(f"Failed to load model: {str(e)}")
 
 def classify_stage(probability):
     """Classifies the disease stage based on probability"""
@@ -90,11 +97,23 @@ class handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            content_length = int(self.headers['Content-Length'])
+            content_length = int(self.headers.get('Content-Length', 0))
+            if content_length == 0:
+                raise ValueError("Empty request body")
+
             post_data = self.rfile.read(content_length)
+            if not post_data:
+                raise ValueError("No data received")
+
             input_data = json.loads(post_data.decode('utf-8'))
             
+            if not input_data:
+                raise ValueError("Invalid JSON data")
+
             model = load_model()
+            if not model:
+                raise ValueError("Model failed to load")
+
             processed_input = preprocess_input(input_data)
             
             prediction = model.predict(processed_input)[0]
@@ -116,7 +135,8 @@ class handler(BaseHTTPRequestHandler):
         except Exception as e:
             error_response = {
                 "status": "error",
-                "message": str(e)
+                "message": str(e),
+                "type": str(type(e).__name__)
             }
             self.send_response(500)
             self.send_header('Content-type', 'application/json')
