@@ -26,10 +26,30 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const pythonProcess = spawn("python", [
-      path.join(__dirname, "predict.py"),
-      JSON.stringify(req.body),
-    ]);
+    // Try different Python executable names
+    const pythonCommands = ["python3", "python"];
+    let pythonProcess = null;
+    let errorMessage = "";
+
+    // Try each Python command until one works
+    for (const cmd of pythonCommands) {
+      try {
+        pythonProcess = spawn(cmd, [
+          path.join(__dirname, "predict.py"),
+          JSON.stringify(req.body),
+        ]);
+        break; // If spawn successful, break the loop
+      } catch (err) {
+        errorMessage += `Failed to spawn ${cmd}: ${err.message}\n`;
+        continue;
+      }
+    }
+
+    if (!pythonProcess) {
+      throw new Error(
+        `Could not find Python executable. Errors: ${errorMessage}`
+      );
+    }
 
     let result = "";
     let error = "";
@@ -42,7 +62,23 @@ module.exports = async (req, res) => {
       error += data.toString();
     });
 
+    pythonProcess.on("error", (err) => {
+      res.status(500).json({
+        status: "error",
+        message: "Failed to execute Python script",
+        details: err.message,
+      });
+    });
+
     pythonProcess.on("close", (code) => {
+      if (code !== 0) {
+        return res.status(500).json({
+          status: "error",
+          message: "Python script execution failed",
+          details: error || `Process exited with code ${code}`,
+        });
+      }
+
       try {
         const prediction = JSON.parse(result);
         const { processed_features, ...cleanResponse } = prediction;
@@ -56,6 +92,10 @@ module.exports = async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ error: "Failed to process request" });
+    res.status(500).json({
+      status: "error",
+      message: "Failed to process request",
+      details: error.message,
+    });
   }
 };
